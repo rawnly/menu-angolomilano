@@ -13,6 +13,33 @@
 	"upload_source_maps": true,
 	"compatibility_flags": [
 		"nodejs_compat"
+	],
+	"triggers": {
+		"crons": [
+			"0 12 * * *"
+		]
+	},
+	"ai": {
+		"binding": "AI",
+		"remote": true
+	},
+	"browser": {
+		"binding": "BROWSER"
+	},
+	"kv_namespaces": [
+		{
+			"binding": "ANGOLOMILANO_MENU_KV",
+			"id": "44da9db16521476b8f45164312001351",
+			"preview_id": "aad6b54f323a437f9272700549c59d8e",
+			"remote": true
+		}
+	],
+	"vectorize": [
+		{
+			"binding": "VECTORIZE",
+			"index_name": "angolo-menu-embeddings",
+			"remote": true
+		}
 	]
 	/**
 	 * Smart Placement
