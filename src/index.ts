@@ -120,12 +120,13 @@ type SlackEvent = {
 const handleEvents = (req: Request) =>
 	Effect.gen(function* () {
 		const rawBody = yield* Effect.promise(() => req.text());
+		yield* Effect.log("slack event raw body", rawBody.slice(0, 200));
 
 		yield* verifySlackSignature(
 			req.headers.get("X-Slack-Request-Timestamp"),
 			req.headers.get("X-Slack-Signature"),
 			rawBody,
-		);
+		).pipe(Effect.tapError((e) => Effect.logError("signature failed", e)));
 
 		const payload = JSON.parse(rawBody) as SlackEvent;
 
