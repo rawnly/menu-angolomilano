@@ -61,8 +61,8 @@ const extractData = Effect.gen(function* () {
 	return yield* Arr.head(processed);
 });
 
-const invalidSignature = Effect.succeed(
-	new Response("invalid signature", { status: 401 }),
+const invalidSignature = Effect.sync(
+	() => new Response("invalid signature", { status: 401 }),
 );
 
 const handleSlashCommand = (req: Request) =>
