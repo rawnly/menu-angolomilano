@@ -1,5 +1,6 @@
 import {
 	Array as Arr,
+	Console,
 	Data,
 	Duration,
 	Effect,
@@ -10,66 +11,72 @@ import {
 import { scrapeStories } from "./scraper";
 import { CloudflareEnv } from "./types";
 
+const extractData = Effect.gen(function* () {
+	const date = new Date().toDateString();
+
+	const imagesURLs = yield* scrapeStories.pipe(
+		Effect.retry(
+			Schedule.exponential(Duration.seconds(2)).pipe(
+				Schedule.upTo(Duration.seconds(10)),
+			),
+		),
+		cached(`IMAGES_${date}`, {
+			shouldCache: (data) => data.length > 0,
+		}),
+	);
+
+	const processed = yield* pipe(
+		imagesURLs,
+		Effect.forEach(extractImageText, {
+			concurrency: "unbounded",
+		}),
+		Effect.andThen(Arr.filter(Option.isSome)),
+		Effect.tap(Effect.log),
+		Effect.andThen(
+			Arr.filterMap(
+				Option.filter(
+					(el) =>
+						el.text.toLowerCase().includes("primo") &&
+						el.text.toLowerCase().includes("secondo") &&
+						el.text.toLowerCase().includes("contorno") &&
+						el.text.toLowerCase().includes("semper verd"),
+				),
+			),
+		),
+		cached(`DATA_${date}`, {
+			shouldCache: (data) => data.length > 0,
+		}),
+	);
+
+	return yield* Arr.head(processed);
+});
+
 export default {
-	async fetch(_, env): Promise<Response> {
-		return Effect.gen(function* () {
-			const date = new Date().toDateString();
-
-			const imagesURLs = yield* scrapeStories.pipe(
-				Effect.retry(
-					Schedule.exponential(Duration.seconds(2)).pipe(
-						Schedule.upTo(Duration.seconds(10)),
-					),
-				),
-				cached(`IMAGES_${date}`, {
-					shouldCache: (data) => data.length > 0,
-				}),
-			);
-
-			const processed = yield* pipe(
-				imagesURLs,
-				Effect.forEach(extractImageText, {
-					concurrency: "unbounded",
-				}),
-				Effect.andThen(Arr.filter(Option.isSome)),
-				Effect.tap(Effect.log),
-				Effect.andThen(
-					Arr.filterMap(
-						Option.filter(
-							(el) =>
-								el.text.toLowerCase().includes("primo") &&
-								el.text.toLowerCase().includes("secondo") &&
-								el.text.toLowerCase().includes("contorno") &&
-								el.text.toLowerCase().includes("semper verd"),
-						),
-					),
-				),
-				cached(`DATA_${date}`, {
-					shouldCache: (data) => data.length > 0,
-				}),
-			);
-
-			const result = yield* Arr.head(processed);
-
-			return Response.json(result);
-		}).pipe(
+	async scheduled(_, env) {
+		await extractData.pipe(
 			Effect.provideService(CloudflareEnv, env),
-			Effect.catchTags({
-				NoSuchElementException: () =>
-					Effect.succeed(new Response(null, { status: 404 })),
-				AIException: (cause) => {
-					console.error(cause);
-
-					return Effect.succeed(
-						Response.json(
-							{
-								cause,
-							},
-							{ status: 500 },
-						),
-					);
-				},
+			Effect.tapError(Console.error),
+			Effect.runPromise,
+		);
+	},
+	async fetch(_, env): Promise<Response> {
+		return extractData.pipe(
+			Effect.andThen((data) => Response.json({ ok: true, data })),
+			Effect.catchTag("NoSuchElementException", () =>
+				Effect.succeed(
+					Response.json({ ok: false, code: "NOT_FOUND" }, { status: 404 }),
+				),
+			),
+			Effect.catchAll((cause) => {
+				console.error(cause);
+				return Effect.succeed(
+					Response.json(
+						{ ok: false, code: cause._tag, cause },
+						{ status: 500 },
+					),
+				);
 			}),
+			Effect.provideService(CloudflareEnv, env),
 			Effect.runPromise,
 		);
 	},
