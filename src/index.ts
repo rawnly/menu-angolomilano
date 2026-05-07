@@ -1,9 +1,9 @@
 import {
 	Array as Arr,
-	Console,
 	Data,
 	Duration,
 	Effect,
+	Logger,
 	Option,
 	pipe,
 	Schedule,
@@ -91,7 +91,7 @@ const handleSlashCommand = (req: Request) =>
 			),
 			Effect.catchAll((cause) =>
 				Effect.gen(function* () {
-					yield* Console.error("slash command failed", cause);
+					yield* Effect.logError("slash command deferred failed", { cause });
 					yield* postToResponseUrl(responseUrl, {
 						response_type: "ephemeral",
 						text: "Menu not available yet, try later.",
@@ -105,10 +105,12 @@ const handleSlashCommand = (req: Request) =>
 		return new Response("", { status: 200 });
 	}).pipe(
 		Effect.catchTag("SlackSignatureError", () => invalidSignature),
-		Effect.catchAll((cause) => {
-			console.error(cause);
-			return Effect.succeed(new Response("internal error", { status: 500 }));
-		}),
+		Effect.catchAll((cause) =>
+			Effect.logError("slash command failed", { cause }).pipe(
+				Effect.as(new Response("internal error", { status: 500 })),
+			),
+		),
+		Effect.withSpan("slack.commands"),
 	);
 
 type SlackEvent = {
@@ -120,13 +122,12 @@ type SlackEvent = {
 const handleEvents = (req: Request) =>
 	Effect.gen(function* () {
 		const rawBody = yield* Effect.promise(() => req.text());
-		yield* Effect.log("slack event raw body", rawBody.slice(0, 200));
 
 		yield* verifySlackSignature(
 			req.headers.get("X-Slack-Request-Timestamp"),
 			req.headers.get("X-Slack-Signature"),
 			rawBody,
-		).pipe(Effect.tapError((e) => Effect.logError("signature failed", e)));
+		);
 
 		const payload = JSON.parse(rawBody) as SlackEvent;
 
@@ -145,17 +146,23 @@ const handleEvents = (req: Request) =>
 					} else if (event.type === "member_left_channel") {
 						yield* untrackChannel(event.channel);
 					}
-				}).pipe(Effect.catchAll((cause) => Console.error(cause))),
+				}).pipe(
+					Effect.catchAll((cause) =>
+						Effect.logError("event handling failed", { cause, event }),
+					),
+				),
 			);
 		}
 
 		return new Response("", { status: 200 });
 	}).pipe(
 		Effect.catchTag("SlackSignatureError", () => invalidSignature),
-		Effect.catchAll((cause) => {
-			console.error(cause);
-			return Effect.succeed(new Response("internal error", { status: 500 }));
-		}),
+		Effect.catchAll((cause) =>
+			Effect.logError("events handler failed", { cause }).pipe(
+				Effect.as(new Response("internal error", { status: 500 })),
+			),
+		),
+		Effect.withSpan("slack.events"),
 	);
 
 const router = (req: Request) => {
@@ -173,28 +180,34 @@ const router = (req: Request) => {
 				Response.json({ ok: false, code: "NOT_FOUND" }, { status: 404 }),
 			),
 		),
-		Effect.catchAll((cause) => {
-			console.error(cause);
-			return Effect.succeed(
-				Response.json(
-					{ ok: false, code: (cause as { _tag?: string })._tag, cause },
-					{ status: 500 },
+		Effect.catchAll((cause) =>
+			Effect.logError("debug fetch failed", { cause }).pipe(
+				Effect.as(
+					Response.json(
+						{ ok: false, code: (cause as { _tag?: string })._tag, cause },
+						{ status: 500 },
+					),
 				),
-			);
-		}),
+			),
+		),
 	);
 };
 
 const runWithEnv = <A, E>(effect: Effect.Effect<A, E, CloudflareEnv>, env: Env) =>
-	effect.pipe(Effect.provideService(CloudflareEnv, env), Effect.runPromise);
+	effect.pipe(
+		Effect.provideService(CloudflareEnv, env),
+		Effect.provide(Logger.json),
+		Effect.runPromise,
+	);
 
 export default {
 	async scheduled(_, env) {
 		await runWithEnv(
 			extractData.pipe(
 				Effect.andThen((data) => broadcastMenu(data.url)),
-				Effect.tapError(Console.error),
+				Effect.tapError((cause) => Effect.logError("cron failed", { cause })),
 				Effect.catchAll(() => Effect.void),
+				Effect.withSpan("scheduled.broadcast"),
 			),
 			env,
 		);
