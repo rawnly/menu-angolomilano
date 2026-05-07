@@ -9,6 +9,16 @@ import {
 	Schedule,
 } from "effect";
 import { scrapeStories } from "./scraper";
+import {
+	broadcastMenu,
+	buildMenuBlocks,
+	getBotUserId,
+	postToResponseUrl,
+	type SlackEnv,
+	trackChannelJoin,
+	untrackChannel,
+	verifySlackSignature,
+} from "./slack";
 import { CloudflareEnv } from "./types";
 
 const extractData = Effect.gen(function* () {
@@ -51,34 +61,146 @@ const extractData = Effect.gen(function* () {
 	return yield* Arr.head(processed);
 });
 
+const invalidSignature = Effect.succeed(
+	new Response("invalid signature", { status: 401 }),
+);
+
+const handleSlashCommand = (req: Request) =>
+	Effect.gen(function* () {
+		const rawBody = yield* Effect.promise(() => req.text());
+
+		yield* verifySlackSignature(
+			req.headers.get("X-Slack-Request-Timestamp"),
+			req.headers.get("X-Slack-Signature"),
+			rawBody,
+		);
+
+		const params = new URLSearchParams(rawBody);
+		const responseUrl = params.get("response_url");
+		if (!responseUrl) {
+			return new Response("missing response_url", { status: 400 });
+		}
+
+		const deferred = extractData.pipe(
+			Effect.andThen((data) =>
+				postToResponseUrl(responseUrl, {
+					response_type: "in_channel",
+					text: "MENUANGOLO",
+					blocks: buildMenuBlocks(data.url),
+				}),
+			),
+			Effect.catchAll((cause) =>
+				Effect.gen(function* () {
+					yield* Console.error("slash command failed", cause);
+					yield* postToResponseUrl(responseUrl, {
+						response_type: "ephemeral",
+						text: "Menu not available yet, try later.",
+					});
+				}),
+			),
+		);
+
+		yield* Effect.forkDaemon(deferred);
+
+		return new Response("", { status: 200 });
+	}).pipe(
+		Effect.catchTag("SlackSignatureError", () => invalidSignature),
+		Effect.catchAll((cause) => {
+			console.error(cause);
+			return Effect.succeed(new Response("internal error", { status: 500 }));
+		}),
+	);
+
+type SlackEvent = {
+	type: string;
+	challenge?: string;
+	event?: { type: string; user?: string; channel?: string };
+};
+
+const handleEvents = (req: Request) =>
+	Effect.gen(function* () {
+		const rawBody = yield* Effect.promise(() => req.text());
+
+		yield* verifySlackSignature(
+			req.headers.get("X-Slack-Request-Timestamp"),
+			req.headers.get("X-Slack-Signature"),
+			rawBody,
+		);
+
+		const payload = JSON.parse(rawBody) as SlackEvent;
+
+		if (payload.type === "url_verification") {
+			return Response.json({ challenge: payload.challenge });
+		}
+
+		if (payload.type === "event_callback" && payload.event) {
+			const event = payload.event;
+			yield* Effect.forkDaemon(
+				Effect.gen(function* () {
+					const botId = yield* getBotUserId;
+					if (event.user !== botId || !event.channel) return;
+					if (event.type === "member_joined_channel") {
+						yield* trackChannelJoin(event.channel);
+					} else if (event.type === "member_left_channel") {
+						yield* untrackChannel(event.channel);
+					}
+				}).pipe(Effect.catchAll((cause) => Console.error(cause))),
+			);
+		}
+
+		return new Response("", { status: 200 });
+	}).pipe(
+		Effect.catchTag("SlackSignatureError", () => invalidSignature),
+		Effect.catchAll((cause) => {
+			console.error(cause);
+			return Effect.succeed(new Response("internal error", { status: 500 }));
+		}),
+	);
+
+const router = (req: Request) => {
+	const url = new URL(req.url);
+	if (req.method === "POST" && url.pathname === "/slack/commands") {
+		return handleSlashCommand(req);
+	}
+	if (req.method === "POST" && url.pathname === "/slack/events") {
+		return handleEvents(req);
+	}
+	return extractData.pipe(
+		Effect.andThen((data) => Response.json({ ok: true, data })),
+		Effect.catchTag("NoSuchElementException", () =>
+			Effect.succeed(
+				Response.json({ ok: false, code: "NOT_FOUND" }, { status: 404 }),
+			),
+		),
+		Effect.catchAll((cause) => {
+			console.error(cause);
+			return Effect.succeed(
+				Response.json(
+					{ ok: false, code: (cause as { _tag?: string })._tag, cause },
+					{ status: 500 },
+				),
+			);
+		}),
+	);
+};
+
+const runWithEnv = <A, E>(effect: Effect.Effect<A, E, CloudflareEnv>, env: Env) =>
+	effect.pipe(Effect.provideService(CloudflareEnv, env), Effect.runPromise);
+
 export default {
 	async scheduled(_, env) {
-		await extractData.pipe(
-			Effect.provideService(CloudflareEnv, env),
-			Effect.tapError(Console.error),
-			Effect.runPromise,
+		await runWithEnv(
+			extractData.pipe(
+				Effect.andThen((data) => broadcastMenu(data.url)),
+				Effect.tapError(Console.error),
+				Effect.catchAll(() => Effect.void),
+			),
+			env,
 		);
 	},
-	async fetch(_, env): Promise<Response> {
-		return extractData.pipe(
-			Effect.andThen((data) => Response.json({ ok: true, data })),
-			Effect.catchTag("NoSuchElementException", () =>
-				Effect.succeed(
-					Response.json({ ok: false, code: "NOT_FOUND" }, { status: 404 }),
-				),
-			),
-			Effect.catchAll((cause) => {
-				console.error(cause);
-				return Effect.succeed(
-					Response.json(
-						{ ok: false, code: cause._tag, cause },
-						{ status: 500 },
-					),
-				);
-			}),
-			Effect.provideService(CloudflareEnv, env),
-			Effect.runPromise,
-		);
+
+	async fetch(req, env): Promise<Response> {
+		return runWithEnv(router(req), env as SlackEnv);
 	},
 } satisfies ExportedHandler<Env>;
 
