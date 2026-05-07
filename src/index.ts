@@ -14,13 +14,14 @@ export default {
 	async fetch(_, env): Promise<Response> {
 		return Effect.gen(function* () {
 			const date = new Date().toDateString();
+
 			const imagesURLs = yield* scrapeStories.pipe(
 				Effect.retry(
 					Schedule.exponential(Duration.seconds(2)).pipe(
 						Schedule.upTo(Duration.seconds(10)),
 					),
 				),
-				cached(date, {
+				cached(`IMAGES_${date}`, {
 					shouldCache: (data) => data.length > 0,
 				}),
 			);
@@ -43,6 +44,9 @@ export default {
 						),
 					),
 				),
+				cached(`DATA_${date}`, {
+					shouldCache: (data) => data.length > 0,
+				}),
 			);
 
 			const result = yield* Arr.head(processed);
