@@ -1,4 +1,4 @@
-import { Data, Effect } from "effect";
+import { Effect } from "effect";
 import { extractData } from "../menu";
 import {
 	broadcastMenu,
@@ -9,10 +9,6 @@ import {
 	untrackChannel,
 	verifySlackSignature,
 } from "../slack";
-
-const invalidSignature = Effect.sync(
-	() => new Response("invalid signature", { status: 401 }),
-);
 
 export const handleSlashCommand = (req: Request) =>
 	Effect.gen(function* () {
@@ -51,13 +47,10 @@ export const handleSlashCommand = (req: Request) =>
 
 		yield* Effect.forkDaemon(deferred);
 
-		return new Response("", { status: 200 });
+		return new Response(null, { status: 204 });
 	}).pipe(
-		Effect.catchTag("SlackSignatureError", () => invalidSignature),
-		Effect.catchAll((cause) =>
-			Effect.logError("slash command failed", { cause }).pipe(
-				Effect.as(new Response("internal error", { status: 500 })),
-			),
+		Effect.tapError((cause) =>
+			Effect.logError("slash command failed", { cause }),
 		),
 		Effect.withSpan("slack.commands"),
 	);
@@ -96,23 +89,15 @@ export const handleEvents = (req: Request) =>
 						yield* untrackChannel(event.channel);
 					}
 				}).pipe(
-					Effect.catchAll((cause) =>
+					Effect.tapError((cause) =>
 						Effect.logError("event handling failed", { cause, event }),
 					),
 				),
 			);
 		}
 
-		return new Response("", { status: 200 });
-	}).pipe(
-		Effect.catchTag("SlackSignatureError", () => invalidSignature),
-		Effect.catchAll((cause) =>
-			Effect.logError("events handler failed", { cause }).pipe(
-				Effect.as(new Response("internal error", { status: 500 })),
-			),
-		),
-		Effect.withSpan("slack.events"),
-	);
+		return new Response(null, { status: 204 });
+	}).pipe(Effect.withSpan("slack.events"));
 
 export const handleBroadcast = (imageUrl: string) =>
 	broadcastMenu(imageUrl).pipe(

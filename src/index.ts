@@ -1,8 +1,12 @@
-import { Data, Effect, Logger } from "effect";
-import { handleBroadcast, handleEvents, handleSlashCommand } from "./handlers/slack";
+import { Effect, Logger } from "effect";
+import {
+	handleBroadcast,
+	handleEvents,
+	handleSlashCommand,
+} from "./handlers/slack";
 import { extractData } from "./menu";
 import { type SlackEnv } from "./slack";
-import { CloudflareEnv } from "./types";
+import { CloudflareContext, CloudflareEnv } from "./types";
 
 const router = (req: Request) => {
 	const url = new URL(req.url);
@@ -14,13 +18,29 @@ const router = (req: Request) => {
 	}
 	return extractData.pipe(
 		Effect.andThen((data) => Response.json({ ok: true, data })),
-		Effect.catchTag("NoSuchElementException", () =>
-			Effect.succeed(
-				Response.json({ ok: false, code: "NOT_FOUND" }, { status: 404 }),
-			),
-		),
+		Effect.withSpan("data-extraction"),
+	);
+};
+
+type InferError<T> = T extends Effect.Effect<any, infer U, any> ? U : never;
+type RouterErrors = InferError<ReturnType<typeof router>>;
+
+const runWithEnv = <A>(
+	effect: Effect.Effect<A, RouterErrors, CloudflareEnv>,
+	env: Env,
+	ctx: ExecutionContext,
+) =>
+	effect.pipe(
+		Effect.catchTags({
+			SlackTransportError: () =>
+				Effect.succeed(new Response(null, { status: 500 })),
+			SlackSignatureError: () =>
+				Effect.succeed(new Response(null, { status: 401 })),
+			NoSuchElementException: () =>
+				Effect.succeed(new Response(null, { status: 404 })),
+		}),
 		Effect.catchAll((cause) =>
-			Effect.logError("debug fetch failed", { cause }).pipe(
+			Effect.logError("operation failed", { cause }).pipe(
 				Effect.as(
 					Response.json(
 						{ ok: false, code: (cause as { _tag?: string })._tag, cause },
@@ -29,28 +49,22 @@ const router = (req: Request) => {
 				),
 			),
 		),
-	);
-};
-
-const runWithEnv = <A, E>(
-	effect: Effect.Effect<A, E, CloudflareEnv>,
-	env: Env,
-) =>
-	effect.pipe(
 		Effect.provideService(CloudflareEnv, env),
+		Effect.provideService(CloudflareContext, ctx),
 		Effect.provide(Logger.json),
 		Effect.runPromise,
 	);
 
 export default {
-	async scheduled(_, env) {
+	async scheduled(_, env, ctx) {
 		await runWithEnv(
 			extractData.pipe(Effect.andThen((data) => handleBroadcast(data.url))),
 			env,
+			ctx,
 		);
 	},
 
-	async fetch(req, env): Promise<Response> {
-		return runWithEnv(router(req), env as SlackEnv);
+	async fetch(req, env, ctx): Promise<Response> {
+		return runWithEnv(router(req), env as SlackEnv, ctx);
 	},
 } satisfies ExportedHandler<Env>;
