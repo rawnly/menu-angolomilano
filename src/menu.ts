@@ -1,11 +1,4 @@
-import {
-	Array as Arr,
-	Duration,
-	Effect,
-	Option,
-	pipe,
-	Schedule,
-} from "effect";
+import { Array as Arr, Duration, Effect, Option, pipe, Schedule } from "effect";
 import { cached } from "./cache";
 import { extractImageText } from "./image-extraction";
 import { scrapeStories } from "./scraper";
@@ -65,7 +58,7 @@ export const extractData = Effect.gen(function* () {
 	const processed = yield* pipe(
 		imagesURLs,
 		Effect.forEach(
-			(url) => extractImageText(url, "@cf/unum/uform-gen2-qwen-500m"),
+			(url) => extractImageText(url, "@cf/meta/llama-3.2-11b-vision-instruct"),
 			{
 				concurrency: "unbounded",
 			},

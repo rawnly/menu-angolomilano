@@ -45,7 +45,13 @@ export const extractImageText = <M extends keyof AiModels>(
 				}),
 			catch: (cause) => new AIException({ cause }),
 		}).pipe(
-			Effect.tap(Effect.logDebug),
+			Effect.tap((text) =>
+				Effect.logInfo("ai ocr output", {
+					data: text,
+					model,
+					url,
+				}),
+			),
 			Effect.map((ocr: any) => String(ocr?.response ?? "")?.trim() ?? ""),
 			Effect.map((s) =>
 				s.length > 10 && !s.toUpperCase().includes("NO_TEXT")
