@@ -1,5 +1,5 @@
-import { Data, Effect } from "effect";
-import { CloudflareEnv } from "./types";
+import { Data, Effect, Ref } from "effect";
+import { CacheOptions, CacheStatusRef, CloudflareEnv } from "./types";
 
 class KVException extends Data.TaggedError("KVException")<{
 	cause: unknown;
@@ -17,18 +17,33 @@ export const cached =
 	<E, R>(effect: Effect.Effect<A, E, R>) =>
 		Effect.gen(function* () {
 			const env = yield* CloudflareEnv;
+			const statusRef = yield* Effect.serviceOption(CacheStatusRef);
+			const cacheOpts = yield* Effect.serviceOption(CacheOptions);
+			const skip = cacheOpts._tag === "Some" && cacheOpts.value.skip;
 
-			const cached = yield* Effect.tryPromise({
-				try: () => env.ANGOLOMILANO_MENU_KV.get<A>(key, "json"),
-				catch: (cause) => new KVException({ cause, operation: "read" }),
-			});
+			if (!skip) {
+				const cached = yield* Effect.tryPromise({
+					try: () => env.ANGOLOMILANO_MENU_KV.get<A>(key, "json"),
+					catch: (cause) => new KVException({ cause, operation: "read" }),
+				});
 
-			if (cached) {
-				yield* Effect.logDebug("cache hit");
-				return cached;
+				if (cached) {
+					yield* Effect.logDebug("cache hit");
+					if (statusRef._tag === "Some") {
+						yield* Ref.update(statusRef.value, (s) =>
+							s === "MISS" ? s : "HIT",
+						);
+					}
+					return cached;
+				}
+			} else {
+				yield* Effect.logDebug("cache bypass");
 			}
 
 			yield* Effect.logDebug("cache miss");
+			if (statusRef._tag === "Some") {
+				yield* Ref.set(statusRef.value, "MISS");
+			}
 
 			const data = yield* effect;
 

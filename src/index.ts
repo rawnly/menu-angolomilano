@@ -1,4 +1,4 @@
-import { Effect, Logger } from "effect";
+import { Effect, Logger, Ref } from "effect";
 import {
 	handleBroadcast,
 	handleEvents,
@@ -6,7 +6,22 @@ import {
 } from "./handlers/slack";
 import { extractData } from "./menu";
 import { type SlackEnv } from "./slack";
-import { CloudflareContext, CloudflareEnv } from "./types";
+import {
+	CacheOptions,
+	CacheStatusRef,
+	type CacheStatusValue,
+	CloudflareContext,
+	CloudflareEnv,
+} from "./types";
+
+const shouldSkipCache = (req: Request) => {
+	const cc = req.headers.get("cache-control");
+	if (!cc) return false;
+	return cc
+		.split(",")
+		.map((token) => token.trim().toLowerCase())
+		.includes("no-cache");
+};
 
 const router = (req: Request) => {
 	const url = new URL(req.url);
@@ -16,10 +31,19 @@ const router = (req: Request) => {
 	if (req.method === "POST" && url.pathname === "/slack/events") {
 		return handleEvents(req);
 	}
-	return extractData.pipe(
-		Effect.andThen((data) => Response.json({ ok: true, data })),
-		Effect.withSpan("data-extraction"),
-	);
+	const skip = shouldSkipCache(req);
+	return Effect.gen(function* () {
+		const statusRef = yield* Ref.make<CacheStatusValue>("HIT");
+		const data = yield* extractData.pipe(
+			Effect.provideService(CacheStatusRef, statusRef),
+			Effect.provideService(CacheOptions, { skip }),
+		);
+		const status = yield* Ref.get(statusRef);
+		return Response.json(
+			{ ok: true, data },
+			{ headers: { "X-Cache": skip ? "MISS" : status } },
+		);
+	}).pipe(Effect.withSpan("data-extraction"));
 };
 
 type InferError<T> = T extends Effect.Effect<any, infer U, any> ? U : never;

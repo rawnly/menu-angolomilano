@@ -4,44 +4,58 @@ import { extractImageText } from "./image-extraction";
 import { scrapeStories } from "./scraper";
 
 const TIME_ZONE = "Europe/Rome";
+const ANCHOR_HOUR = 11;
 
-const getZonedNow = (timeZone: string) => {
-	const now = new Date();
-	return new Date(now.toLocaleString("en-US", { timeZone }));
-};
-
-const formatZonedDate = (date: Date, timeZone: string) =>
-	new Intl.DateTimeFormat("en-CA", {
+const getRomeParts = (d: Date = new Date()) => {
+	const parts = new Intl.DateTimeFormat("en-GB", {
+		timeZone: TIME_ZONE,
 		year: "numeric",
 		month: "2-digit",
 		day: "2-digit",
-		timeZone,
-	}).format(date);
-
-const secondsUntilNextNoon = (timeZone = TIME_ZONE) => {
-	const zonedNow = getZonedNow(timeZone);
-	const nextNoon = new Date(zonedNow);
-	nextNoon.setHours(12, 0, 0, 0);
-	if (zonedNow >= nextNoon) {
-		nextNoon.setDate(nextNoon.getDate() + 1);
-	}
-	const diffMs = nextNoon.getTime() - zonedNow.getTime();
-	return Math.max(1, Math.ceil(diffMs / 1000));
+		hour: "2-digit",
+		minute: "2-digit",
+		second: "2-digit",
+		hour12: false,
+	})
+		.formatToParts(d)
+		.reduce<Record<string, string>>((acc, p) => {
+			if (p.type !== "literal") acc[p.type] = p.value;
+			return acc;
+		}, {});
+	return {
+		year: Number(parts.year),
+		month: Number(parts.month),
+		day: Number(parts.day),
+		hour: Number(parts.hour === "24" ? "0" : parts.hour),
+		minute: Number(parts.minute),
+		second: Number(parts.second),
+	};
 };
 
-const getNoonAnchorKey = (timeZone = TIME_ZONE) => {
-	const zonedNow = getZonedNow(timeZone);
-	const noonAnchor = new Date(zonedNow);
-	noonAnchor.setHours(12, 0, 0, 0);
-	if (zonedNow < noonAnchor) {
-		noonAnchor.setDate(noonAnchor.getDate() - 1);
+const getAnchorKey = () => {
+	const p = getRomeParts();
+	if (p.hour < ANCHOR_HOUR) {
+		const d = new Date(Date.UTC(p.year, p.month - 1, p.day));
+		d.setUTCDate(d.getUTCDate() - 1);
+		return d.toISOString().slice(0, 10);
 	}
-	return formatZonedDate(noonAnchor, timeZone);
+	return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+};
+
+const secondsUntilNextAnchor = () => {
+	const p = getRomeParts();
+	const secondsToday = p.hour * 3600 + p.minute * 60 + p.second;
+	const anchorSecs = ANCHOR_HOUR * 3600;
+	const diff =
+		secondsToday < anchorSecs
+			? anchorSecs - secondsToday
+			: 24 * 3600 - (secondsToday - anchorSecs);
+	return Math.max(1, diff);
 };
 
 export const extractData = Effect.gen(function* () {
-	const cacheKeyDate = getNoonAnchorKey();
-	const cacheTtl = secondsUntilNextNoon();
+	const cacheKeyDate = getAnchorKey();
+	const cacheTtl = secondsUntilNextAnchor();
 
 	const imagesURLs = yield* scrapeStories.pipe(
 		Effect.retry(
