@@ -1,4 +1,4 @@
-import { Data, Effect, Option } from "effect";
+import { Array as Arr, Data, Effect, Option } from "effect";
 import { CloudflareEnv } from "./types";
 
 class AIException extends Data.TaggedError("AIException")<{ cause: unknown }> {}
@@ -40,13 +40,13 @@ export const extractImageText = <M extends keyof AiModels>(
 					image: imageBinary,
 					max_tokens: 800,
 					prompt: `transcribe ALL the text visible in this image exactly as written.
-					Include every word, number and price. if theres no text reploy exactly: NO_TEXT.
+					Include every word, number and price. if theres no text reply exactly: NO_TEXT.
 					Otherwise reply with ONLY the transcribed text - no commentary, no explanations.`,
 				}),
 			catch: (cause) => new AIException({ cause }),
 		}).pipe(
 			Effect.tap((text) =>
-				Effect.logInfo("ai ocr output", {
+				Effect.logDebug("ai ocr output", {
 					data: text,
 					model,
 					url,
@@ -62,3 +62,29 @@ export const extractImageText = <M extends keyof AiModels>(
 
 		return ocrData;
 	});
+
+export const formatText = Effect.fn("formatText")(function* (text: string) {
+	const env = yield* CloudflareEnv;
+
+	const response = yield* Effect.tryPromise(() =>
+		env.AI.run("@cf/moonshotai/kimi-k2.5", {
+			prompt: `
+				Given the following restaurant menu text format it into markdown.
+				You should never include commentary, explanations or any other text except for the formatted one.
+				ONLY RETURN THE MARKDOWN as plain text.
+
+				Use just lists and bold/italic modifiers. No headings.
+
+				--- MENU ---
+				${text}
+			`,
+		}),
+	);
+
+	return yield* Arr.head(response.choices).pipe(
+		Option.andThen((o) => Option.fromNullable(o.message.content)),
+		Option.andThen(
+			Option.liftPredicate((content) => content.trim().length > 0),
+		),
+	);
+});

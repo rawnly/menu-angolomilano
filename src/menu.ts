@@ -1,6 +1,6 @@
 import { Array as Arr, Duration, Effect, Option, pipe, Schedule } from "effect";
 import { cached } from "./cache";
-import { extractImageText } from "./image-extraction";
+import { extractImageText, formatText } from "./image-extraction";
 import { scrapeStories } from "./scraper";
 
 const TIME_ZONE = "Europe/Rome";
@@ -96,5 +96,22 @@ export const extractData = Effect.gen(function* () {
 		}),
 	);
 
-	return yield* Arr.head(processed);
+	const result = yield* Arr.head(processed).pipe(
+		Effect.andThen((data) =>
+			Effect.gen(function* () {
+				return {
+					...data,
+					markdown: yield* formatText(data.text).pipe(
+						Effect.option,
+						Effect.andThen(Option.getOrNull),
+						cached(`MARKDOWN_${cacheKeyDate}`, {
+							ttl: cacheTtl,
+						}),
+					),
+				};
+			}),
+		),
+	);
+
+	return result;
 });
