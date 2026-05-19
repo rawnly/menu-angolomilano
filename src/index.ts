@@ -50,7 +50,7 @@ type InferError<T> = T extends Effect.Effect<any, infer U, any> ? U : never;
 type RouterErrors = InferError<ReturnType<typeof router>>;
 
 const runWithEnv = <A>(
-	effect: Effect.Effect<A, RouterErrors, CloudflareEnv>,
+	effect: Effect.Effect<A, RouterErrors, CloudflareEnv | CloudflareContext>,
 	env: Env,
 	ctx: ExecutionContext,
 ) =>

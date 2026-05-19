@@ -1,14 +1,34 @@
-import { Effect } from "effect";
+import { Effect, Logger } from "effect";
 import { extractData } from "../menu";
 import {
 	broadcastMenu,
 	buildMenuBlocks,
 	getBotUserId,
 	postToResponseUrl,
+	slackApi,
 	trackChannelJoin,
 	untrackChannel,
 	verifySlackSignature,
 } from "../slack";
+import { CloudflareContext, CloudflareEnv } from "../types";
+
+const runInBackground = <A, E>(
+	effect: Effect.Effect<A, E, CloudflareEnv>,
+) =>
+	Effect.gen(function* () {
+		const env = yield* CloudflareEnv;
+		const ctx = yield* CloudflareContext;
+		const promise = Effect.runPromise(
+			effect.pipe(
+				Effect.catchAll((cause) =>
+					Effect.logError("background task failed", { cause }),
+				),
+				Effect.provideService(CloudflareEnv, env),
+				Effect.provide(Logger.json),
+			) as Effect.Effect<unknown, never, never>,
+		);
+		ctx.waitUntil(promise);
+	});
 
 export const handleSlashCommand = (req: Request) =>
 	Effect.gen(function* () {
@@ -25,18 +45,24 @@ export const handleSlashCommand = (req: Request) =>
 			payload: Object.fromEntries(params.entries()),
 		});
 		const responseUrl = params.get("response_url");
-		if (!responseUrl) {
-			return new Response("missing response_url", { status: 400 });
+		const channelId = params.get("channel_id");
+		if (!responseUrl || !channelId) {
+			return new Response("missing response_url or channel_id", { status: 400 });
 		}
 
-		const deferred = extractData.pipe(
-			Effect.andThen((data) =>
-				postToResponseUrl(responseUrl, {
-					response_type: "in_channel",
-					text: "MENUANGOLO",
-					blocks: buildMenuBlocks(data.url),
-				}),
-			),
+		const deferred = Effect.gen(function* () {
+			yield* trackChannelJoin(channelId).pipe(
+				Effect.catchAll((cause) =>
+					Effect.logError("trackChannelJoin failed", { cause, channelId }),
+				),
+			);
+			const data = yield* extractData;
+			yield* slackApi("chat.postMessage", {
+				channel: channelId,
+				text: "MENUANGOLO",
+				blocks: buildMenuBlocks(data.url),
+			});
+		}).pipe(
 			Effect.catchAll((cause) =>
 				Effect.gen(function* () {
 					yield* Effect.logError("slash command deferred failed", { cause });
@@ -48,7 +74,7 @@ export const handleSlashCommand = (req: Request) =>
 			),
 		);
 
-		yield* Effect.forkDaemon(deferred);
+		yield* runInBackground(deferred);
 
 		return new Response(null, { status: 204 });
 	}).pipe(
@@ -83,31 +109,30 @@ export const handleEvents = (req: Request) =>
 
 		if (payload.type === "event_callback" && payload.event) {
 			const event = payload.event;
-			yield* Effect.forkDaemon(
-				Effect.gen(function* () {
-					const botId = yield* getBotUserId;
-					yield* Effect.logDebug("event dispatch", {
-						event,
-						botId,
-						isSelf: event.user === botId,
+			yield* Effect.gen(function* () {
+				const botId = yield* getBotUserId;
+				yield* Effect.logDebug("event dispatch", {
+					event,
+					botId,
+					isSelf: event.user === botId,
+				});
+				if (event.user !== botId || !event.channel) return;
+				if (event.type === "member_joined_channel") {
+					yield* Effect.logInfo("tracking channel join", {
+						channel: event.channel,
 					});
-					if (event.user !== botId || !event.channel) return;
-					if (event.type === "member_joined_channel") {
-						yield* Effect.logInfo("tracking channel join", {
-							channel: event.channel,
-						});
-						yield* trackChannelJoin(event.channel);
-					} else if (event.type === "member_left_channel") {
-						yield* Effect.logInfo("untracking channel", {
-							channel: event.channel,
-						});
-						yield* untrackChannel(event.channel);
-					}
-				}).pipe(
-					Effect.tapError((cause) =>
-						Effect.logError("event handling failed", { cause, event }),
-					),
+					yield* trackChannelJoin(event.channel);
+				} else if (event.type === "member_left_channel") {
+					yield* Effect.logInfo("untracking channel", {
+						channel: event.channel,
+					});
+					yield* untrackChannel(event.channel);
+				}
+			}).pipe(
+				Effect.tapError((cause) =>
+					Effect.logError("event handling failed", { cause, event }),
 				),
+				Effect.catchAll(() => Effect.void),
 			);
 		}
 
