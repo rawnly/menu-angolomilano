@@ -68,23 +68,32 @@ export const formatText = Effect.fn("formatText")(function* (text: string) {
 
 	const response = yield* Effect.tryPromise(() =>
 		env.AI.run("@cf/moonshotai/kimi-k2.5", {
+			temperature: 0,
+			max_tokens: 800,
 			prompt: `
-				Given the following restaurant menu text format it into markdown.
-				You should never include commentary, explanations or any other text except for the formatted one.
-				ONLY RETURN THE MARKDOWN as plain text.
+Convert ONLY the text between <menu> and </menu> into Slack-compatible markdown.
 
-				Use just lists and bold/italic modifiers. No headings.
+Hard rules:
+- Return ONLY the formatted menu.
+- Do not add, infer, translate, complete, or invent any item.
+- Do not add descriptions.
+- Do not include items that are not present in the input.
+- Preserve all original words, spelling, prices, and ordering.
+- Use only bullets, bold, and italic.
+- No headings with #.
+- No code fences.
 
-				--- MENU ---
-				${text}
-			`,
+<menu>
+${text}
+</menu>
+`,
 		}),
-	).pipe(Effect.tap((data) => Effect.logInfo(data)));
+	).pipe(Effect.tapError(Effect.logError));
 
-	return yield* Arr.head(response.choices).pipe(
-		Option.andThen((o) => Option.fromNullable(o?.message?.content)),
-		Option.andThen(
-			Option.liftPredicate((content) => content.trim().length > 0),
-		),
+	const formattedText = yield* Arr.head(response.choices).pipe(
+		Option.andThen((choice: any) => Option.fromNullable(choice?.text)),
+		Option.andThen(Option.liftPredicate((txt) => txt.trim().length > 0)),
 	);
+
+	return String(formattedText);
 });

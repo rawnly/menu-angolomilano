@@ -78,7 +78,6 @@ export const extractData = Effect.gen(function* () {
 			},
 		),
 		Effect.andThen(Arr.filter(Option.isSome)),
-		Effect.tap(Effect.log),
 		Effect.andThen(
 			Arr.filterMap(
 				Option.filter(
