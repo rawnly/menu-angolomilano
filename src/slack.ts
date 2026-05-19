@@ -19,6 +19,34 @@ export const buildMenuBlocks = (imageUrl: string) => [
 	{ type: "image", image_url: imageUrl, alt_text: "MENUANGOLO" },
 ];
 
+export const buildMarkdownReplyBlocks = (markdown: string) => [
+	{
+		type: "section",
+		text: { type: "mrkdwn", text: markdown },
+	},
+];
+
+export const postMenu = (
+	channel: string,
+	imageUrl: string,
+	markdown: string | null,
+) =>
+	Effect.gen(function* () {
+		const res = yield* slackApi<{ ts: string }>("chat.postMessage", {
+			channel,
+			text: "MENUANGOLO",
+			blocks: buildMenuBlocks(imageUrl),
+		});
+		if (markdown) {
+			yield* slackApi("chat.postMessage", {
+				channel,
+				thread_ts: res.ts,
+				text: markdown,
+				blocks: buildMarkdownReplyBlocks(markdown),
+			});
+		}
+	});
+
 export class SlackSignatureError extends Data.TaggedError(
 	"SlackSignatureError",
 )<{ reason: string }> {}
@@ -195,25 +223,21 @@ export const postToResponseUrl = (responseUrl: string, payload: unknown) =>
 		catch: (cause) => new SlackTransportError({ cause }),
 	});
 
-export const broadcastMenu = (imageUrl: string) =>
+export const broadcastMenu = (imageUrl: string, markdown: string | null) =>
 	Effect.gen(function* () {
 		const channels = yield* listChannels;
 		yield* Effect.logInfo("broadcastMenu start", {
 			imageUrl,
+			hasMarkdown: Boolean(markdown),
 			channelCount: channels.length,
 			channels,
 		});
-		const blocks = buildMenuBlocks(imageUrl);
 		yield* Effect.forEach(
 			channels,
 			(channel) =>
 				Effect.gen(function* () {
 					yield* Effect.logDebug("broadcastMenu posting", { channel });
-					yield* slackApi("chat.postMessage", {
-						channel,
-						text: "MENUANGOLO",
-						blocks,
-					});
+					yield* postMenu(channel, imageUrl, markdown);
 					yield* Effect.logDebug("broadcastMenu posted", { channel });
 				}).pipe(
 					Effect.catchAll((e) =>

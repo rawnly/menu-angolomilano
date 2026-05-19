@@ -83,7 +83,9 @@ const runWithEnv = <A>(
 export default {
 	async scheduled(_, env, ctx) {
 		await runWithEnv(
-			extractData.pipe(Effect.andThen((data) => handleBroadcast(data.url))),
+			extractData.pipe(
+				Effect.andThen((data) => handleBroadcast(data.url, data.markdown)),
+			),
 			env,
 			ctx,
 		);

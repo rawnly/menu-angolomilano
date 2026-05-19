@@ -2,10 +2,9 @@ import { Effect, Logger } from "effect";
 import { extractData } from "../menu";
 import {
 	broadcastMenu,
-	buildMenuBlocks,
 	getBotUserId,
+	postMenu,
 	postToResponseUrl,
-	slackApi,
 	trackChannelJoin,
 	untrackChannel,
 	verifySlackSignature,
@@ -57,11 +56,7 @@ export const handleSlashCommand = (req: Request) =>
 				),
 			);
 			const data = yield* extractData;
-			yield* slackApi("chat.postMessage", {
-				channel: channelId,
-				text: "MENUANGOLO",
-				blocks: buildMenuBlocks(data.url),
-			});
+			yield* postMenu(channelId, data.url, data.markdown);
 		}).pipe(
 			Effect.catchAll((cause) =>
 				Effect.gen(function* () {
@@ -139,8 +134,8 @@ export const handleEvents = (req: Request) =>
 		return new Response(null, { status: 204 });
 	}).pipe(Effect.withSpan("slack.events"));
 
-export const handleBroadcast = (imageUrl: string) =>
-	broadcastMenu(imageUrl).pipe(
+export const handleBroadcast = (imageUrl: string, markdown: string | null) =>
+	broadcastMenu(imageUrl, markdown).pipe(
 		Effect.tapError((cause) => Effect.logError("cron failed", { cause })),
 		Effect.catchAll(() => Effect.void),
 		Effect.withSpan("scheduled.broadcast"),
