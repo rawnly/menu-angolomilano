@@ -79,10 +79,10 @@ export const formatText = Effect.fn("formatText")(function* (text: string) {
 				${text}
 			`,
 		}),
-	);
+	).pipe(Effect.tap((data) => Effect.logInfo(data)));
 
 	return yield* Arr.head(response.choices).pipe(
-		Option.andThen((o) => Option.fromNullable(o.message.content)),
+		Option.andThen((o) => Option.fromNullable(o?.message?.content)),
 		Option.andThen(
 			Option.liftPredicate((content) => content.trim().length > 0),
 		),
