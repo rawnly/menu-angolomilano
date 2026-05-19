@@ -12,10 +12,6 @@ const BOT_USER_KEY = "slack:bot_user_id";
 export const channelKey = (id: string) => `${CHANNEL_KEY_PREFIX}${id}`;
 
 export const buildMenuBlocks = (imageUrl: string) => [
-	{
-		type: "header",
-		text: { type: "plain_text", text: "MENUANGOLO", emoji: true },
-	},
 	{ type: "image", image_url: imageUrl, alt_text: "MENUANGOLO" },
 ];
 
