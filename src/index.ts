@@ -1,4 +1,4 @@
-import { Effect, Logger, Ref } from "effect";
+import { Effect, Logger, LogLevel, Ref } from "effect";
 import {
 	handleBroadcast,
 	handleEvents,
@@ -76,6 +76,7 @@ const runWithEnv = <A>(
 		Effect.provideService(CloudflareEnv, env),
 		Effect.provideService(CloudflareContext, ctx),
 		Effect.provide(Logger.json),
+		Logger.withMinimumLogLevel(LogLevel.Debug),
 		Effect.runPromise,
 	);
 

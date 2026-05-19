@@ -21,6 +21,9 @@ export const handleSlashCommand = (req: Request) =>
 		);
 
 		const params = new URLSearchParams(rawBody);
+		yield* Effect.logInfo("slash command payload", {
+			payload: Object.fromEntries(params.entries()),
+		});
 		const responseUrl = params.get("response_url");
 		if (!responseUrl) {
 			return new Response("missing response_url", { status: 400 });
@@ -72,6 +75,7 @@ export const handleEvents = (req: Request) =>
 		);
 
 		const payload = JSON.parse(rawBody) as SlackEvent;
+		yield* Effect.logInfo("slack event received", { payload });
 
 		if (payload.type === "url_verification") {
 			return Response.json({ challenge: payload.challenge });
@@ -82,10 +86,21 @@ export const handleEvents = (req: Request) =>
 			yield* Effect.forkDaemon(
 				Effect.gen(function* () {
 					const botId = yield* getBotUserId;
+					yield* Effect.logDebug("event dispatch", {
+						event,
+						botId,
+						isSelf: event.user === botId,
+					});
 					if (event.user !== botId || !event.channel) return;
 					if (event.type === "member_joined_channel") {
+						yield* Effect.logInfo("tracking channel join", {
+							channel: event.channel,
+						});
 						yield* trackChannelJoin(event.channel);
 					} else if (event.type === "member_left_channel") {
+						yield* Effect.logInfo("untracking channel", {
+							channel: event.channel,
+						});
 						yield* untrackChannel(event.channel);
 					}
 				}).pipe(

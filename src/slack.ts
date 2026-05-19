@@ -89,6 +89,12 @@ export const verifySlackSignature = (
 export const slackApi = <T = unknown>(method: string, body: unknown) =>
 	Effect.gen(function* () {
 		const env = yield* slackEnv;
+		yield* Effect.logDebug("slackApi request", {
+			method,
+			body,
+			hasToken: Boolean(env.SLACK_BOT_TOKEN),
+			tokenPrefix: env.SLACK_BOT_TOKEN?.slice(0, 5),
+		});
 		const res = yield* Effect.tryPromise({
 			try: () =>
 				fetch(`https://slack.com/api/${method}`, {
@@ -105,6 +111,14 @@ export const slackApi = <T = unknown>(method: string, body: unknown) =>
 			try: () => res.json(),
 			catch: (cause) => new SlackTransportError({ cause }),
 		})) as { ok: boolean; error?: string } & Record<string, unknown>;
+
+		yield* Effect.logDebug("slackApi response", {
+			method,
+			status: res.status,
+			ok: json.ok,
+			error: json.error,
+			response: json,
+		});
 
 		if (!json.ok) {
 			return yield* new SlackApiError({
@@ -184,15 +198,29 @@ export const postToResponseUrl = (responseUrl: string, payload: unknown) =>
 export const broadcastMenu = (imageUrl: string) =>
 	Effect.gen(function* () {
 		const channels = yield* listChannels;
+		yield* Effect.logInfo("broadcastMenu start", {
+			imageUrl,
+			channelCount: channels.length,
+			channels,
+		});
 		const blocks = buildMenuBlocks(imageUrl);
 		yield* Effect.forEach(
 			channels,
 			(channel) =>
-				slackApi("chat.postMessage", {
-					channel,
-					text: "MENUANGOLO",
-					blocks,
-				}).pipe(Effect.catchAll((e) => Effect.logError(e))),
+				Effect.gen(function* () {
+					yield* Effect.logDebug("broadcastMenu posting", { channel });
+					yield* slackApi("chat.postMessage", {
+						channel,
+						text: "MENUANGOLO",
+						blocks,
+					});
+					yield* Effect.logDebug("broadcastMenu posted", { channel });
+				}).pipe(
+					Effect.catchAll((e) =>
+						Effect.logError("broadcastMenu post failed", { channel, cause: e }),
+					),
+				),
 			{ concurrency: 5 },
 		);
+		yield* Effect.logInfo("broadcastMenu done");
 	});
