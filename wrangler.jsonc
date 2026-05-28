@@ -23,7 +23,7 @@
 	},
 	"triggers": {
 		"crons": [
-			"0 9 * * *"
+			"30 9 * * 2-5" // tue-thu at 11:30am CET
 		]
 	},
 	"ai": {
