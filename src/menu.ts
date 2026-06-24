@@ -1,4 +1,12 @@
-import { Array as Arr, Duration, Effect, Option, pipe, Schedule } from "effect";
+import {
+	Array as Arr,
+	Array,
+	Duration,
+	Effect,
+	Option,
+	pipe,
+	Schedule,
+} from "effect";
 import { cached } from "./cache";
 import { extractImageText, formatText } from "./image-extraction";
 import { scrapeStories } from "./scraper";
@@ -71,6 +79,7 @@ export const extractData = Effect.gen(function* () {
 
 	const processed = yield* pipe(
 		imagesURLs,
+		Array.reverse, // reverse the array so it takes always the latest one
 		Effect.forEach(
 			(url) => extractImageText(url, "@cf/meta/llama-3.2-11b-vision-instruct"),
 			{
