@@ -26,7 +26,7 @@ export const scrapeStories = Effect.gen(function* () {
 		catch: (cause) => new PuppeteerException({ cause }),
 	});
 
-	let data: string[] = [];
+	let data = new Set<string>();
 
 	yield* Effect.gen(function* () {
 		const evaluation: string[] = yield* Effect.tryPromise({
@@ -44,17 +44,18 @@ export const scrapeStories = Effect.gen(function* () {
 			catch: (cause) => new DomEvaluationError({ cause }),
 		});
 
-		data.push(...evaluation);
+		const ev = new Set(evaluation);
+		data = new Set([...data, ...ev]);
 	}).pipe(
 		Effect.repeat(
 			Schedule.spaced(Duration.seconds(1)).pipe(
 				Schedule.upTo(Duration.seconds(10)),
-				Schedule.untilInput(() => data.length >= 3),
+				Schedule.untilInput(() => data.size >= 3),
 			),
 		),
 	);
 
-	return data;
+	return [...data];
 });
 
 class PuppeteerException extends Data.TaggedError("PuppeteerException")<{
