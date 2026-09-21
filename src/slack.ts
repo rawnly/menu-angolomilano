@@ -8,6 +8,8 @@ export type SlackEnv = Cloudflare.Env & {
 
 const CHANNEL_KEY_PREFIX = "slack:channel:";
 const BOT_USER_KEY = "slack:bot_user_id";
+const LAST_PUBLISHED_KEY = "menu:last_published";
+const LAST_PUBLISHED_TTL = 60 * 60 * 24 * 30;
 
 export const channelKey = (id: string) => `${CHANNEL_KEY_PREFIX}${id}`;
 
@@ -183,6 +185,26 @@ export const untrackChannel = (channel: string) =>
 		const env = yield* slackEnv;
 		yield* Effect.tryPromise({
 			try: () => env.ANGOLOMILANO_MENU_KV.delete(channelKey(channel)),
+			catch: (cause) => new SlackTransportError({ cause }),
+		});
+	});
+
+export const getLastPublishedMenu = Effect.gen(function* () {
+	const env = yield* slackEnv;
+	return yield* Effect.tryPromise({
+		try: () => env.ANGOLOMILANO_MENU_KV.get(LAST_PUBLISHED_KEY),
+		catch: (cause) => new SlackTransportError({ cause }),
+	});
+});
+
+export const setLastPublishedMenu = (menuText: string) =>
+	Effect.gen(function* () {
+		const env = yield* slackEnv;
+		yield* Effect.tryPromise({
+			try: () =>
+				env.ANGOLOMILANO_MENU_KV.put(LAST_PUBLISHED_KEY, menuText, {
+					expirationTtl: LAST_PUBLISHED_TTL,
+				}),
 			catch: (cause) => new SlackTransportError({ cause }),
 		});
 	});

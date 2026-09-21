@@ -4,7 +4,7 @@ import {
 	handleEvents,
 	handleSlashCommand,
 } from "./handlers/slack";
-import { extractData } from "./menu";
+import { extractData, extractMenuText } from "./menu";
 import { type SlackEnv } from "./slack";
 import {
 	CacheOptions,
@@ -83,8 +83,8 @@ const runWithEnv = <A>(
 export default {
 	async scheduled(_, env, ctx) {
 		await runWithEnv(
-			extractData.pipe(
-				Effect.andThen((data) => handleBroadcast(data.url, data.markdown)),
+			extractMenuText.pipe(
+				Effect.andThen((data) => handleBroadcast(data.url, data.text)),
 			),
 			env,
 			ctx,

@@ -1,10 +1,13 @@
-import { Effect, Logger } from "effect";
+import { Effect, Logger, Option } from "effect";
+import { formatText } from "../image-extraction";
 import { extractData } from "../menu";
 import {
 	broadcastMenu,
 	getBotUserId,
+	getLastPublishedMenu,
 	postMenu,
 	postToResponseUrl,
+	setLastPublishedMenu,
 	trackChannelJoin,
 	untrackChannel,
 	verifySlackSignature,
@@ -134,8 +137,21 @@ export const handleEvents = (req: Request) =>
 		return new Response(null, { status: 204 });
 	}).pipe(Effect.withSpan("slack.events"));
 
-export const handleBroadcast = (imageUrl: string, markdown: string | null) =>
-	broadcastMenu(imageUrl, markdown).pipe(
+export const handleBroadcast = (imageUrl: string, menuText: string) =>
+	Effect.gen(function* () {
+		const lastPublished = yield* getLastPublishedMenu;
+		if (lastPublished === menuText) {
+			yield* Effect.logInfo("menu unchanged since last publish, skipping");
+			return;
+		}
+
+		const markdown = yield* formatText(menuText).pipe(
+			Effect.option,
+			Effect.andThen(Option.getOrNull),
+		);
+		yield* broadcastMenu(imageUrl, markdown);
+		yield* setLastPublishedMenu(menuText);
+	}).pipe(
 		Effect.tapError((cause) => Effect.logError("cron failed", { cause })),
 		Effect.catchAll(() => Effect.void),
 		Effect.withSpan("scheduled.broadcast"),

@@ -1,4 +1,5 @@
 import { Array as Arr, Data, Effect, Option } from "effect";
+import { cached } from "./cache";
 import { CloudflareEnv } from "./types";
 
 class AIException extends Data.TaggedError("AIException")<{ cause: unknown }> {}
@@ -9,10 +10,18 @@ class ImageException extends Data.TaggedError("ImageException")<{
 	cause: unknown;
 }> {}
 
-export const extractImageText = <M extends keyof AiModels>(
-	url: string,
-	model: M,
-) =>
+// stable, bounded-length key for KV (story image URLs can be long)
+const hashUrl = (s: string) => {
+	let h = 0;
+	for (let i = 0; i < s.length; i++) {
+		h = (h * 31 + s.charCodeAt(i)) | 0;
+	}
+	return (h >>> 0).toString(36);
+};
+
+const OCR_CACHE_TTL = 60 * 60 * 24; // stories are gone from IG within 24h anyway
+
+const runOcr = <M extends keyof AiModels>(url: string, model: M) =>
 	Effect.gen(function* () {
 		const env = yield* CloudflareEnv;
 
@@ -55,13 +64,21 @@ export const extractImageText = <M extends keyof AiModels>(
 			Effect.map((ocr: any) => String(ocr?.response ?? "")?.trim() ?? ""),
 			Effect.map((s) =>
 				s.length > 10 && !s.toUpperCase().includes("NO_TEXT")
-					? Option.some({ url, text: s })
-					: Option.none(),
+					? { url, text: s }
+					: null,
 			),
 		);
 
 		return ocrData;
 	});
+
+export const extractImageText = <M extends keyof AiModels>(
+	url: string,
+	model: M,
+) =>
+	runOcr(url, model)
+		.pipe(cached(`OCR_${hashUrl(url)}`, { ttl: OCR_CACHE_TTL }))
+		.pipe(Effect.map(Option.fromNullable));
 
 export const formatText = Effect.fn("formatText")(function* (text: string) {
 	const env = yield* CloudflareEnv;

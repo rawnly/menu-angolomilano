@@ -23,7 +23,8 @@
 	},
 	"triggers": {
 		"crons": [
-			"30 9 * * 2-5" // tue-thu at 11:30am CET
+			"*/30 7-11 * * 2-5", // tue-thu every 30min, 09:00-13:30 CET
+			"0 12 * * 2-5" // tue-thu 14:00 CET (last run of the window)
 		]
 	},
 	"ai": {
