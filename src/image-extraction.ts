@@ -10,38 +10,45 @@ class ImageException extends Data.TaggedError("ImageException")<{
 	cause: unknown;
 }> {}
 
-// stable, bounded-length key for KV (story image URLs can be long)
-const hashUrl = (s: string) => {
-	let h = 0;
-	for (let i = 0; i < s.length; i++) {
-		h = (h * 31 + s.charCodeAt(i)) | 0;
-	}
-	return (h >>> 0).toString(36);
-};
-
 const OCR_CACHE_TTL = 60 * 60 * 24; // stories are gone from IG within 24h anyway
 
-const runOcr = <M extends keyof AiModels>(url: string, model: M) =>
+const fetchImageBinary = (url: string) =>
+	Effect.tryPromise(() => fetch(url)).pipe(
+		Effect.filterOrFail(
+			(response) => response.ok,
+			(response) =>
+				new FetchError({
+					cause: response.status.toString(),
+				}),
+		),
+		Effect.filterOrFail(
+			(response) =>
+				response.headers.get("Content-Type")?.startsWith("image/") === true,
+			(cause) =>
+				new ImageException({ cause: cause.headers.get("Content-Type") }),
+		),
+		Effect.andThen((res) => Effect.tryPromise(() => res.arrayBuffer())),
+	);
+
+// the story-viewer proxy re-signs the image URL on every page load, so the
+// URL itself is not a stable cache key - hash the actual bytes instead. This
+// also means an unchanged story yields byte-identical cached OCR text run
+// after run, instead of a slightly different AI transcription each time.
+const hashBytes = (buffer: ArrayBuffer) =>
+	Effect.promise(async () => {
+		const digest = await crypto.subtle.digest("SHA-256", buffer);
+		return [...new Uint8Array(digest)]
+			.map((b) => b.toString(16).padStart(2, "0"))
+			.join("");
+	});
+
+const runOcr = <M extends keyof AiModels>(
+	imageBinary: number[],
+	model: M,
+	url: string,
+) =>
 	Effect.gen(function* () {
 		const env = yield* CloudflareEnv;
-
-		const imageBinary = yield* Effect.tryPromise(() => fetch(url)).pipe(
-			Effect.filterOrFail(
-				(response) => response.ok,
-				(response) =>
-					new FetchError({
-						cause: response.status.toString(),
-					}),
-			),
-			Effect.filterOrFail(
-				(response) =>
-					response.headers.get("Content-Type")?.startsWith("image/") === true,
-				(cause) =>
-					new ImageException({ cause: cause.headers.get("Content-Type") }),
-			),
-			Effect.andThen((res) => Effect.tryPromise(() => res.arrayBuffer())),
-			Effect.andThen((buffer) => [...new Uint8Array(buffer)]),
-		);
 
 		const ocrData = yield* Effect.tryPromise({
 			try: () =>
@@ -63,9 +70,7 @@ const runOcr = <M extends keyof AiModels>(url: string, model: M) =>
 			),
 			Effect.map((ocr: any) => String(ocr?.response ?? "")?.trim() ?? ""),
 			Effect.map((s) =>
-				s.length > 10 && !s.toUpperCase().includes("NO_TEXT")
-					? { url, text: s }
-					: null,
+				s.length > 10 && !s.toUpperCase().includes("NO_TEXT") ? s : null,
 			),
 		);
 
@@ -76,9 +81,17 @@ export const extractImageText = <M extends keyof AiModels>(
 	url: string,
 	model: M,
 ) =>
-	runOcr(url, model)
-		.pipe(cached(`OCR_${hashUrl(url)}`, { ttl: OCR_CACHE_TTL }))
-		.pipe(Effect.map(Option.fromNullable));
+	Effect.gen(function* () {
+		const buffer = yield* fetchImageBinary(url);
+		const contentHash = yield* hashBytes(buffer);
+		const imageBinary = [...new Uint8Array(buffer)];
+
+		const text = yield* runOcr(imageBinary, model, url).pipe(
+			cached(`OCR_${contentHash}`, { ttl: OCR_CACHE_TTL }),
+		);
+
+		return text ? Option.some({ url, text }) : Option.none();
+	});
 
 export const formatText = Effect.fn("formatText")(function* (text: string) {
 	const env = yield* CloudflareEnv;
