@@ -1,6 +1,7 @@
 import { Effect, Logger, Option } from "effect";
 import { formatText } from "../image-extraction";
 import { extractData } from "../menu";
+import { isSameMenu, textSimilarity } from "../text-similarity";
 import {
 	broadcastMenu,
 	getBotUserId,
@@ -140,9 +141,23 @@ export const handleEvents = (req: Request) =>
 export const handleBroadcast = (imageUrl: string, menuText: string) =>
 	Effect.gen(function* () {
 		const lastPublished = yield* getLastPublishedMenu;
-		if (lastPublished === menuText) {
-			yield* Effect.logInfo("menu unchanged since last publish, skipping");
-			return;
+		if (lastPublished !== null) {
+			const similarity = textSimilarity(lastPublished, menuText);
+			yield* Effect.logInfo("menu similarity vs last publish", {
+				similarity,
+				exactMatch: lastPublished === menuText,
+			});
+			// Same photo can come back with slightly different OCR text (proxy
+			// re-encodes bytes on every fetch, vision model isn't fully
+			// deterministic) - treat near-identical text as "nothing changed"
+			// instead of only exact string equality, to avoid re-broadcasting
+			// the same menu photo.
+			if (isSameMenu(lastPublished, menuText)) {
+				yield* Effect.logInfo("menu unchanged since last publish, skipping", {
+					similarity,
+				});
+				return;
+			}
 		}
 
 		const markdown = yield* formatText(menuText).pipe(
