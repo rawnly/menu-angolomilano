@@ -2,14 +2,22 @@ import puppeteer from "@cloudflare/puppeteer";
 import { Data, Duration, Effect, Schedule } from "effect";
 import { CloudflareEnv } from "./types";
 
-export const scrapeStories = Effect.gen(function* () {
+export const scrapeStories = Effect.scoped(Effect.gen(function* () {
 	const url = "https://insta-stories-viewer.com/angolomilanofficial";
 	const env = yield* CloudflareEnv;
 
-	const browser = yield* Effect.tryPromise({
-		try: () => puppeteer.launch(env.BROWSER),
-		catch: (cause) => new PuppeteerException({ cause }),
-	});
+	// always close the browser (success, failure or interruption), otherwise
+	// sessions leak and eventually hit the Browser Rendering concurrency limit
+	const browser = yield* Effect.acquireRelease(
+		Effect.tryPromise({
+			try: () => puppeteer.launch(env.BROWSER),
+			catch: (cause) => new PuppeteerException({ cause }),
+		}),
+		(browser) =>
+			Effect.promise(() => browser.close().catch(() => undefined)).pipe(
+				Effect.tap(() => Effect.logDebug("scraper: browser closed")),
+			),
+	);
 	const page = yield* Effect.tryPromise({
 		try: () => browser.newPage(),
 		catch: (cause) => new PuppeteerException({ cause }),
@@ -55,8 +63,9 @@ export const scrapeStories = Effect.gen(function* () {
 		),
 	);
 
+	yield* Effect.logInfo("scraper: stories found", { count: data.size });
 	return [...data];
-});
+}));
 
 class PuppeteerException extends Data.TaggedError("PuppeteerException")<{
 	cause: unknown;

@@ -30,19 +30,31 @@ export const extractMenuText = Effect.gen(function* () {
 				concurrency: "unbounded",
 			},
 		),
+		Effect.tap((all) =>
+			Effect.logInfo("ocr results", {
+				images: all.length,
+				withText: all.filter(Option.isSome).length,
+			}),
+		),
 		Effect.andThen(Arr.filter(Option.isSome)),
 		Effect.andThen(
 			Arr.filterMap(
 				Option.filter(
 					(el) =>
-						el.text.toLowerCase().includes("primo") &&
-						el.text.toLowerCase().includes("secondo") &&
+						el.text.toLowerCase().includes("prim") &&
+						el.text.toLowerCase().includes("second") &&
 						el.text.toLowerCase().includes("contorno") &&
 						el.text.toLowerCase().includes("semper verd"),
 				),
 			),
 		),
 	);
+
+	if (processed.length === 0) {
+		yield* Effect.logError("no story matched the menu heuristic", {
+			images: imagesURLs.length,
+		});
+	}
 
 	return yield* Arr.head(processed);
 });
