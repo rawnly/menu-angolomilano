@@ -10,17 +10,27 @@
 	"upload_source_maps": true,
 	// wrangler runs this before `deploy` / `dev`, so CI (Workers Builds) that
 	// only calls `npx wrangler deploy` still produces web/dist
-	"build": { "command": "pnpm --filter angolomilano-web build" },
+	"build": {
+		"command": "pnpm --filter angolomilano-web build"
+	},
 	"assets": {
 		"directory": "./web/dist",
 		"not_found_handling": "single-page-application",
 		// only these hit the Worker, everything else is static
-		"run_worker_first": ["/api/*", "/slack/*"]
+		"run_worker_first": [
+			"/api/*",
+			"/slack/*"
+		]
 	},
 	// TODO: once the domain is on Cloudflare, uncomment, and after moving the
 	// Slack request URLs to it, also set workers_dev/preview_urls to false.
-	// "routes": [{ "pattern": "bot.example.com", "custom_domain": true }],
-	// "workers_dev": false,
+	"routes": [
+		{
+			"pattern": "angolomilano.untitled.dev",
+			"custom_domain": true
+		}
+	],
+	"workers_dev": true,
 	// "preview_urls": false,
 	"compatibility_flags": [
 		"nodejs_compat"
@@ -49,9 +59,21 @@
 		"binding": "BROWSER"
 	},
 	"durable_objects": {
-		"bindings": [{ "name": "MENU_REFRESHER", "class_name": "MenuRefresher" }]
+		"bindings": [
+			{
+				"name": "MENU_REFRESHER",
+				"class_name": "MenuRefresher"
+			}
+		]
 	},
-	"migrations": [{ "tag": "v1", "new_sqlite_classes": ["MenuRefresher"] }],
+	"migrations": [
+		{
+			"tag": "v1",
+			"new_sqlite_classes": [
+				"MenuRefresher"
+			]
+		}
+	],
 	"kv_namespaces": [
 		{
 			"binding": "ANGOLOMILANO_MENU_KV",
