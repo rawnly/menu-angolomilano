@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build:web": "pnpm --filter angolomilano-web build",
-    "deploy": "pnpm build:web && wrangler deploy",
+    "deploy": "wrangler deploy",
     "dev": "wrangler dev",
     "dev:web": "pnpm --filter angolomilano-web dev",
     "start": "wrangler dev",

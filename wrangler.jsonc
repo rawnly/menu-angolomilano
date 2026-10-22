@@ -8,6 +8,9 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2026-05-06",
 	"upload_source_maps": true,
+	// wrangler runs this before `deploy` / `dev`, so CI (Workers Builds) that
+	// only calls `npx wrangler deploy` still produces web/dist
+	"build": { "command": "pnpm --filter angolomilano-web build" },
 	"assets": {
 		"directory": "./web/dist",
 		"not_found_handling": "single-page-application",
