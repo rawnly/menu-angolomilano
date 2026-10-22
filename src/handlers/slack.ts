@@ -1,6 +1,6 @@
 import { Effect, Logger, Option } from "effect";
 import { formatText } from "../image-extraction";
-import { extractData } from "../menu";
+import { getMenu } from "../menu";
 import { isSameMenu, textSimilarity } from "../text-similarity";
 import {
 	broadcastMenu,
@@ -13,6 +13,7 @@ import {
 	untrackChannel,
 	verifySlackSignature,
 } from "../slack";
+import { type BroadcastOutcome, saveRun } from "../runs";
 import { CloudflareContext, CloudflareEnv } from "../types";
 
 const runInBackground = <A, E>(
@@ -59,12 +60,18 @@ export const handleSlashCommand = (req: Request) =>
 					Effect.logError("trackChannelJoin failed", { cause, channelId }),
 				),
 			);
-			const data = yield* extractData;
+			const data = yield* getMenu;
 			yield* postMenu(channelId, data.url, data.markdown);
 		}).pipe(
 			Effect.catchAll((cause) =>
 				Effect.gen(function* () {
 					yield* Effect.logError("slash command deferred failed", { cause });
+					yield* saveRun({
+						trigger: "slash",
+						status: "error",
+						error:
+							(cause as { _tag?: string })?._tag ?? "slash command failed",
+					});
 					yield* postToResponseUrl(responseUrl, {
 						response_type: "ephemeral",
 						text: "Menu not available yet, try later.",
@@ -138,11 +145,16 @@ export const handleEvents = (req: Request) =>
 		return new Response(null, { status: 204 });
 	}).pipe(Effect.withSpan("slack.events"));
 
-export const handleBroadcast = (imageUrl: string, menuText: string) =>
+export const handleBroadcast = (
+	imageUrl: string,
+	menuText: string,
+	options: { force?: boolean } = {},
+) =>
 	Effect.gen(function* () {
+		let similarity: number | undefined;
 		const lastPublished = yield* getLastPublishedMenu;
-		if (lastPublished !== null) {
-			const similarity = textSimilarity(lastPublished, menuText);
+		if (lastPublished !== null && !options.force) {
+			similarity = textSimilarity(lastPublished, menuText);
 			yield* Effect.logInfo("menu similarity vs last publish", {
 				similarity,
 				exactMatch: lastPublished === menuText,
@@ -156,7 +168,12 @@ export const handleBroadcast = (imageUrl: string, menuText: string) =>
 				yield* Effect.logInfo("menu unchanged since last publish, skipping", {
 					similarity,
 				});
-				return;
+				return {
+					status: "skipped",
+					url: imageUrl,
+					text: menuText,
+					similarity,
+				} satisfies BroadcastOutcome;
 			}
 		}
 
@@ -166,8 +183,13 @@ export const handleBroadcast = (imageUrl: string, menuText: string) =>
 		);
 		yield* broadcastMenu(imageUrl, markdown);
 		yield* setLastPublishedMenu(menuText);
+		return {
+			status: "published",
+			url: imageUrl,
+			text: menuText,
+			similarity,
+		} satisfies BroadcastOutcome;
 	}).pipe(
-		Effect.tapError((cause) => Effect.logError("cron failed", { cause })),
-		Effect.catchAll(() => Effect.void),
+		Effect.tapError((cause) => Effect.logError("broadcast failed", { cause })),
 		Effect.withSpan("scheduled.broadcast"),
 	);

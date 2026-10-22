@@ -1,27 +1,15 @@
-import { Effect, Logger, LogLevel, Ref } from "effect";
+import { Effect, Logger, LogLevel } from "effect";
+import { handleApi } from "./handlers/api";
 import {
 	handleBroadcast,
 	handleEvents,
 	handleSlashCommand,
 } from "./handlers/slack";
-import { extractData, extractMenuText } from "./menu";
+import { refreshMenu } from "./menu";
 import { type SlackEnv } from "./slack";
-import {
-	CacheOptions,
-	CacheStatusRef,
-	type CacheStatusValue,
-	CloudflareContext,
-	CloudflareEnv,
-} from "./types";
-
-const shouldSkipCache = (req: Request) => {
-	const cc = req.headers.get("cache-control");
-	if (!cc) return false;
-	return cc
-		.split(",")
-		.map((token) => token.trim().toLowerCase())
-		.includes("no-cache");
-};
+export { MenuRefresher } from "./menu-refresher";
+import { recordRun } from "./runs";
+import { CloudflareContext, CloudflareEnv } from "./types";
 
 const router = (req: Request) => {
 	const url = new URL(req.url);
@@ -31,19 +19,10 @@ const router = (req: Request) => {
 	if (req.method === "POST" && url.pathname === "/slack/events") {
 		return handleEvents(req);
 	}
-	const skip = shouldSkipCache(req);
-	return Effect.gen(function* () {
-		const statusRef = yield* Ref.make<CacheStatusValue>("HIT");
-		const data = yield* extractData.pipe(
-			Effect.provideService(CacheStatusRef, statusRef),
-			Effect.provideService(CacheOptions, { skip }),
-		);
-		const status = yield* Ref.get(statusRef);
-		return Response.json(
-			{ ok: true, data },
-			{ headers: { "X-Cache": skip ? "MISS" : status } },
-		);
-	}).pipe(Effect.withSpan("data-extraction"));
+	if (url.pathname.startsWith("/api/")) {
+		return handleApi(req);
+	}
+	return Effect.succeed(new Response("Not found", { status: 404 }));
 };
 
 type InferError<T> = T extends Effect.Effect<any, infer U, any> ? U : never;
@@ -55,24 +34,40 @@ const runWithEnv = <A>(
 	ctx: ExecutionContext,
 ) =>
 	effect.pipe(
-		Effect.catchTags({
-			SlackTransportError: () =>
-				Effect.succeed(new Response(null, { status: 500 })),
-			SlackSignatureError: () =>
-				Effect.succeed(new Response(null, { status: 401 })),
-			NoSuchElementException: () =>
-				Effect.succeed(new Response(null, { status: 404 })),
+		Effect.catchAll((error) => {
+			const e = error as { _tag?: string; reason?: string; status?: number };
+			switch (e._tag) {
+				case "SlackTransportError":
+					return Effect.succeed(new Response(null, { status: 500 }));
+				case "SlackSignatureError":
+					return Effect.succeed(new Response(null, { status: 401 }));
+				case "NoSuchElementException":
+					return Effect.succeed(new Response(null, { status: 404 }));
+				case "ScrapeBusy":
+					return Effect.succeed(
+						Response.json(
+							{ ok: false, error: "a refresh is already running, try again shortly" },
+							{ status: 409 },
+						),
+					);
+				case "AccessError":
+					return Effect.succeed(
+						Response.json(
+							{ ok: false, error: e.reason },
+							{ status: e.status ?? 401 },
+						),
+					);
+				default:
+					return Effect.logError("operation failed", { cause: error }).pipe(
+						Effect.as(
+							Response.json(
+								{ ok: false, code: e._tag, cause: error },
+								{ status: 500 },
+							),
+						),
+					);
+			}
 		}),
-		Effect.catchAll((cause) =>
-			Effect.logError("operation failed", { cause }).pipe(
-				Effect.as(
-					Response.json(
-						{ ok: false, code: (cause as { _tag?: string })._tag, cause },
-						{ status: 500 },
-					),
-				),
-			),
-		),
 		Effect.provideService(CloudflareEnv, env),
 		Effect.provideService(CloudflareContext, ctx),
 		Effect.provide(Logger.json),
@@ -83,8 +78,11 @@ const runWithEnv = <A>(
 export default {
 	async scheduled(_, env, ctx) {
 		await runWithEnv(
-			extractMenuText.pipe(
+			refreshMenu.pipe(
 				Effect.andThen((data) => handleBroadcast(data.url, data.text)),
+				recordRun("cron"),
+				// failures are already logged + recorded; don't fail the cron
+				Effect.catchAll(() => Effect.void),
 			),
 			env,
 			ctx,

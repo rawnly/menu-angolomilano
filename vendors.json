@@ -1,0 +1,9 @@
+{
+  "defaultMode": "copy",
+  "vendors": {
+    "effect": {
+      "repo": "https://github.com/effect-ts/effect",
+      "ref": "effect@4.0.5"
+    }
+  }
+}

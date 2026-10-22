@@ -1,0 +1,2 @@
+[env]
+DEV_AUTH_BYPASS = "1"

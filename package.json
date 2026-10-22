@@ -3,8 +3,10 @@
   "version": "0.0.0",
   "private": true,
   "scripts": {
-    "deploy": "wrangler deploy",
+    "build:web": "pnpm --filter angolomilano-web build",
+    "deploy": "pnpm build:web && wrangler deploy",
     "dev": "wrangler dev",
+    "dev:web": "pnpm --filter angolomilano-web dev",
     "start": "wrangler dev",
     "test": "vitest",
     "cf-typegen": "wrangler types"

@@ -7,6 +7,7 @@ declare namespace Cloudflare {
 	}
 	interface Env {
 		ANGOLOMILANO_MENU_KV: KVNamespace;
+		MENU_REFRESHER: DurableObjectNamespace<import("./src/menu-refresher").MenuRefresher>;
 		VECTORIZE: VectorizeIndex;
 		BROWSER: Fetcher;
 		AI: Ai;

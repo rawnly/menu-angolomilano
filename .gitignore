@@ -1,4 +1,5 @@
 # Logs
+/vendor/
 
 logs
 _.log

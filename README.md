@@ -44,9 +44,25 @@ npx wrangler dev
 npx wrangler deploy
 ```
 
+## Web dashboard
+Svelte + Tailwind SPA in `web/`, served by the same Worker via static assets.
+`/api/*` is protected by Cloudflare Access (JWT validated in `src/access.ts`).
+
+```bash
+npx wrangler secret put ACCESS_TEAM_DOMAIN   # myteam.cloudflareaccess.com
+npx wrangler secret put ACCESS_AUD           # AUD tag of the Access application
+```
+
+Zero Trust: create a self-hosted application on your domain covering `/` and
+`/api/*` only (NOT `/slack/*`), with an allow policy for your email.
+
+Local dev: copy `.dev.vars.example` to `.dev.vars`, run `pnpm dev` (Worker, :8787)
+and `pnpm dev:web` (Vite, proxies `/api`).
+
 ## Endpoints
 - `POST /slack/commands` Slack slash command handler
 - `POST /slack/events` Slack events handler
+- `/api/*` dashboard API (Access-protected): `me`, `state`, `menu`, `broadcast`, `channels`
 
 ## Notes
 - `.dev.vars` and `.env*` are intentionally gitignored.
